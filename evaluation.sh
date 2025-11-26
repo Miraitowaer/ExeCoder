@@ -3,7 +3,7 @@
 
 nvidia-smi
 
-ROOT=ExecCoder
+ROOT=/data/private/ExeCoder
 MODEL_PATH=$ROOT
 
 
@@ -24,7 +24,9 @@ EVAL_PATH=$ROOT/evaluation/eval_results
 
 MODALs=("code")
 MODELS=("deepseek-coder-6.7b-instruct")
-models=("code")
+# models=("code")
+# models=("Qwen2.5-Coder-7B-Instruct")
+models=("Deepseek-coder-6.7b-instruct-code")
 
 
 length=${#MODALs[@]}

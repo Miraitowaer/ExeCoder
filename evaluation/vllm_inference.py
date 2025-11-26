@@ -2,6 +2,7 @@ from vllm import LLM, SamplingParams
 import json
 from transformers import AutoTokenizer
 from pathlib import Path
+import torch
 
 
 def generate_batch(examples, tokenizer, llm, model: str):
@@ -49,18 +50,20 @@ def generate_main(data_path: str, model_name_or_path: str, saved_path: str, cot:
     print("Saved path: {}".format(saved_path))
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True)
     print("load tokenizer {} from {} over.".format(tokenizer.__class__, model_name_or_path))
+    
+    num_gpus = torch.cuda.device_count()
 
     # Create an LLM.
     llm = LLM(
         model=model_name_or_path,
         pipeline_parallel_size=1,
-        tensor_parallel_size=8,
+        tensor_parallel_size=num_gpus,
         max_num_seqs=512,
         max_num_batched_tokens=8192,
         max_model_len=4096,
         gpu_memory_utilization=0.85,
         trust_remote_code=True,
-        dtype="float32"
+        dtype="auto"
     )
     
     generated_examples = generate_batch(examples, tokenizer, llm, model_name_or_path)    

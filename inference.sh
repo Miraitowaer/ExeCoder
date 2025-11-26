@@ -3,13 +3,15 @@
 
 nvidia-smi
 
-ROOT=ExecCoder
+ROOT=/data/private/ExeCoder
 MODEL_PATH=$ROOT
 
 
 BASE_DATA_PATH=$ROOT/data/testset
 BASE_MODEL_PATH=$ROOT/checkpoint
 BASE_SAVED_PATH=$ROOT/evaluation/eval_results
+
+BASE_MODEL_PATH=/data/private/ExeCoder/results/Deepseek-coder-6.7b-instruct-code/checkpoint-400
 
 data_file1=transcoder_cpp-python.json
 data_file2=transcoder_python-cpp.json
@@ -24,7 +26,9 @@ EVAL_PATH=$ROOT/evaluation/eval_results
 
 MODALs=("code")
 MODELS=("deepseek-coder-6.7b-instruct")
-models=("code")
+# models=("code")
+# models=("Qwen2.5-Coder-7B-Instruct")
+models=("Deepseek-coder-6.7b-instruct-code")
 
 
 length=${#MODALs[@]}
@@ -38,38 +42,40 @@ do
   # inference
    python $ROOT/evaluation/vllm_inference.py \
        --data_path $BASE_DATA_PATH/$data_file1 \
-       --model_name_or_path $BASE_MODEL_PATH/$model \
+       --model_name_or_path $BASE_MODEL_PATH \
        --saved_path $BASE_SAVED_PATH/$model-$data_file1
    #    --cot
 
    python $ROOT/evaluation/vllm_inference.py \
        --data_path $BASE_DATA_PATH/$data_file2 \
-       --model_name_or_path $BASE_MODEL_PATH/$model \
+       --model_name_or_path $BASE_MODEL_PATH \
        --saved_path $BASE_SAVED_PATH/$model-$data_file2
    #    --cot
 
   python $ROOT/evaluation/vllm_inference.py \
       --data_path $BASE_DATA_PATH/$data_file3 \
-      --model_name_or_path $BASE_MODEL_PATH/$model \
+      --model_name_or_path $BASE_MODEL_PATH \
       --saved_path $BASE_SAVED_PATH/$model-$data_file3
   #    --cot
 
   python $ROOT/evaluation/vllm_inference.py \
      --data_path $BASE_DATA_PATH/$data_file4 \
-     --model_name_or_path $BASE_MODEL_PATH/$model \
+     --model_name_or_path $BASE_MODEL_PATH \
      --saved_path $BASE_SAVED_PATH/$model-$data_file4
   #    --cot
 
   python $ROOT/evaluation/vllm_inference.py \
      --data_path $BASE_DATA_PATH/$data_file5 \
-     --model_name_or_path $BASE_MODEL_PATH/$model \
+     --model_name_or_path $BASE_MODEL_PATH \
      --saved_path $BASE_SAVED_PATH/$model-$data_file5
   #    --cot
 
   python $ROOT/evaluation/vllm_inference.py \
      --data_path $BASE_DATA_PATH/$data_file6 \
-     --model_name_or_path $BASE_MODEL_PATH/$model \
+     --model_name_or_path $BASE_MODEL_PATH \
      --saved_path $BASE_SAVED_PATH/$model-$data_file6
   #    --cot
 
 done
+
+# --model_name_or_path $BASE_MODEL_PATH/$model \

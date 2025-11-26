@@ -12,8 +12,8 @@ import re
 
 COMPILED = "#Compiled"
 COMPILATION = "#Compilation"
-ROOT_PATH = "ExeCoder/"
-JAVA_HOME = ROOT_PATH + "tools/jdk-10.0.2/bin/"
+ROOT_PATH = "/data/private/ExeCoder/"
+JAVA_HOME = "/data/private/ExeCoder/tools/zulu8.82.0.21-ca-fx-jdk8.0.432-linux_x64/bin"
 
 
 
@@ -88,6 +88,11 @@ def run_java_program(script_path, i, tmp_dir):
         # executable="/bin/bash",
     )
     res = eval_state(proc, classname + '.java')
+    # status, error_msg, _ = res
+    # if status == "compilation":
+    #     print(f"⚠️ [Debug] Compile Error in {script_path}:")
+    #     print(error_msg) # 打印具体的 javac 报错信息
+    #     print("-" * 20)
     return res, i
 
 

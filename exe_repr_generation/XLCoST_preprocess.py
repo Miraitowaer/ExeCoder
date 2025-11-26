@@ -7,11 +7,11 @@ from dataflow_tools import generate_DFG
 from deduplication import filter_dataset
 
 
-XL_DATA_PATH = 'data/XLCoST/generation/pair_data_tok_full_desc'
+XL_DATA_PATH = '/data/private/ExeCoder/data/XLCoST_data/generation/pair_data_tok_full_desc'
 
-CMT_PATH = 'data/XLCoST/generation/pair_data_tok_full_desc_comment'
+CMT_PATH = '/data/private/ExeCoder/data/XLCoST_data/generation/pair_data_tok_full_desc_comment'
 
-ROOT_SAVE_PATH = 'data/XLCoST-Instruct/'
+ROOT_SAVE_PATH = '/data/private/ExeCoder/data/XLCoST_data/XLCoST-Instruct/'
 CODE_SAVE_PATH = ROOT_SAVE_PATH + 'NL/'
 
 
