@@ -12,17 +12,19 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import traceback
 import ast
+import difflib  # 新增：用于模糊匹配
 
 # 添加线程锁，确保统计计数和文件操作的线程安全
 lock = threading.Lock()
 
-# ===================== 配置参数（用户需替换）=====================
+# ===================== 配置参数（用户需替换） =====================
 # 输入配置：目录+正则匹配多文件
 INPUT_DIR = "/data/private/ExeCoder/data/dpo_mining"  # 输入文件所在目录（已填用户路径）
-INPUT_FILE_PATTERN = r"dpo_sample_.*_debug\.json"  # 匹配 "dpo_sample_*_debug.json"
+INPUT_FILE_PATTERN = r"dpo_sample_\d+\.json$"  # 匹配 "dpo_sample_*_debug.json"
 
+# r"dpo_sample_.*_debug\.json"
 # 输出文件路径（后缀改为json）
-OUTPUT_FILE = "/data/private/ExeCoder/data/dpo_errors_pairs.json"  # 输出带错误信息的DPO样本（JSON数组）
+OUTPUT_FILE = "/data/private/ExeCoder/data/dpo_errors_pairs_python.json"  # 输出带错误信息的DPO样本（JSON数组）
 # 新增：错误的Chosen代码保存目录
 BAD_CHOSEN_DIR = "/data/private/ExeCoder/data/bad_chosen_codes"
 
@@ -204,7 +206,14 @@ def check_compilation(code: str, lang: str, tmp_dir: str) -> Tuple[bool, str]:
     file_path = ""
     try:
         if lang == "python":
-            return (True, "")
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.py') as f:
+                f.write(code)
+                f.flush()
+                cmd = ["python", "-m", "py_compile", f.name]
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                if result.returncode != 0:
+                    return False, result.stderr
+                return True, ""
         elif lang == "java":
             # 提取主类名（关键修改）
             class_name = extract_java_main_class(code)
@@ -385,23 +394,16 @@ def normalize_text(text: str) -> str:
 
 def calculate_similarity(text1: str, text2: str) -> float:
     """
-    计算文本相似度（基于标准化后的字符串匹配）
+    计算文本相似度（使用 difflib，对模糊匹配更鲁棒）
     """
     norm1 = normalize_text(text1)
     norm2 = normalize_text(text2)
     if not norm1 or not norm2:
         return 0.0
-    # 计算最长公共子串占比（取较小字符串长度为分母）
-    min_len = min(len(norm1), len(norm2))
-    max_common = 0
-    for i in range(len(norm1)):
-        for j in range(len(norm2)):
-            k = 0
-            while i + k < len(norm1) and j + k < len(norm2) and norm1[i + k] == norm2[j + k]:
-                k += 1
-            if k > max_common:
-                max_common = k
-    return max_common / min_len if min_len > 0 else 0.0
+    
+    # 使用 difflib.SequenceMatcher 计算相似度 ratio
+    # 这比原先的最长公共子串更能容忍细微差异（如多余的转义符）
+    return difflib.SequenceMatcher(None, norm1, norm2).ratio()
 
 def match_code_lines_to_numbers(error_code_lines: List[str], rejected_code: str) -> List[int]:
     """
@@ -413,11 +415,14 @@ def match_code_lines_to_numbers(error_code_lines: List[str], rejected_code: str)
         return matched_lines
         
     rejected_lines = rejected_code.split('\n')  # rejected纯代码按行分割
+    # 预处理 rejected 代码行
     normalized_rejected = [normalize_text(line) for line in rejected_lines]
 
     for error_line in error_code_lines:
         if not error_line.strip():
             continue
+        
+        # 归一化错误代码行
         normalized_error = normalize_text(error_line)
         if not normalized_error:
             continue
@@ -428,6 +433,7 @@ def match_code_lines_to_numbers(error_code_lines: List[str], rejected_code: str)
         for idx, norm_rej_line in enumerate(normalized_rejected):
             if not norm_rej_line:
                 continue
+            
             similarity = calculate_similarity(normalized_error, norm_rej_line)
             if similarity > best_similarity and similarity >= MATCH_THRESHOLD:
                 best_similarity = similarity
@@ -465,7 +471,7 @@ def save_bad_chosen_code(chosen_code: str, error_msg: str, instruction: str, lan
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(chosen_code)
     
-    print(f"已保存错误的Chosen代码到: {file_path}")
+    # print(f"已保存错误的Chosen代码到: {file_path}")
 
 # ===================== 错误定位核心函数 =====================
 def locate_execution_error_lines(rejected_code: str, error_msg: str, prompt: str, lang: str) -> List[int]:
@@ -580,21 +586,28 @@ def get_logic_error_code_lines(chosen_code: str, rejected_code: str, chosen_out:
             print(f"警告：未找到错误代码行列表，响应内容：{response[:300]}...")
             return [], []
         
-        code_content = json_match.group(1).strip()
-        if not code_content:
-            return [], []
-        
-        # 按换行分割，处理每行的引号和空白
-        error_code_lines = []
-        for line in code_content.split('\n'):
-            line = line.strip()
-            if not line:
-                continue
-            # 去除前后引号（支持单引号、双引号、转义引号）
-            line = re.sub(r'^["\'](.*?)["\']$', r'\1', line)
-            line = re.sub(r'^\\["\'](.*?)\\["\']$', r'\1', line)
-            if line:
-                error_code_lines.append(line)
+        # 尝试直接解析整个 JSON 数组，这能正确处理转义字符
+        json_str = json_match.group(0)
+        try:
+            error_code_lines = json.loads(json_str)
+        except json.JSONDecodeError:
+            # 解析失败（如 JSON 不标准），回退到正则提取并手动清理
+            code_content = json_match.group(1).strip()
+            if not code_content:
+                return [], []
+            
+            error_code_lines = []
+            for line in code_content.split('\n'):
+                line = line.strip()
+                if not line:
+                    continue
+                # 去除前后引号（支持单引号、双引号、转义引号）
+                line = re.sub(r'^["\'](.*?)["\']$', r'\1', line)
+                line = re.sub(r'^\\["\'](.*?)\\["\']$', r'\1', line)
+                # 手动处理常见的转义字符残留，如 \" 变为 "
+                line = line.replace(r'\"', '"').replace(r"\'", "'")
+                if line:
+                    error_code_lines.append(line)
         
         # 关键步骤：逐行匹配获取rejected中的相对行号
         matched_line_nums = match_code_lines_to_numbers(error_code_lines, rejected_code)
@@ -636,100 +649,101 @@ def process_sample(sample, root_tmp_dir, error_counts, dpo_pairs):
                 with lock:
                     error_counts["invalid_data"] += 1
                 return
+            
+            if lang == "python":
+                # ===================== 1. 检测编译错误 =====================
+                compile_valid, compile_error_msg = check_compilation(rejected, lang, tmp_dir)
+                if not compile_valid:
+                    # 解析错误行并转换为绝对行号
+                    rel_error_lines = parse_compiler_error_lines(compile_error_msg, lang)
+                    offset = calculate_line_offset(rejected_raw)  # 基于原始文本计算偏移
+                    abs_error_lines = [line + offset for line in rel_error_lines]
 
-            # ===================== 1. 检测编译错误 =====================
-            compile_valid, compile_error_msg = check_compilation(rejected, lang, tmp_dir)
-            if not compile_valid:
-                # 解析错误行并转换为绝对行号
-                rel_error_lines = parse_compiler_error_lines(compile_error_msg, lang)
-                offset = calculate_line_offset(rejected_raw)  # 基于原始文本计算偏移
-                abs_error_lines = [line + offset for line in rel_error_lines]
+                    result = {
+                        "prompt": prompt,
+                        "chosen": chosen,
+                        "rejected": rejected_raw,
+                        "lang": lang,
+                        "error_type": "compilation_error",
+                        "error_msg": compile_error_msg,
+                        "error_lines": abs_error_lines,  # 原始文本中的绝对行号
+                        "error_code": None  # 编译错误无error_code
+                    }
+                    
+                    with lock:
+                        dpo_pairs.append(result)
+                        error_counts["compilation_error"] += 1
+                    return
 
-                result = {
-                    "prompt": prompt,
-                    "chosen": chosen,
-                    "rejected": rejected_raw,
-                    "lang": lang,
-                    "error_type": "compilation_error",
-                    "error_msg": compile_error_msg,
-                    "error_lines": abs_error_lines,  # 原始文本中的绝对行号
-                    "error_code": None  # 编译错误无error_code
-                }
-                
-                with lock:
-                    dpo_pairs.append(result)
-                    error_counts["compilation_error"] += 1
-                return
+                # ===================== 2. 检测执行错误 =====================
+                exec_valid, exec_stdout, exec_stderr = run_code(rejected, lang, tmp_dir)
+                if not exec_valid or exec_stderr:
+                    execution_error_msg = exec_stderr or "执行失败但未返回错误信息"
+                    # 调用大模型定位错误行
+                    # rel_error_lines = locate_execution_error_lines(rejected, execution_error_msg, prompt, lang)
+                    # offset = calculate_line_offset(rejected_raw)
+                    # abs_error_lines = [line + offset for line in rel_error_lines]
 
-            # ===================== 2. 检测执行错误 =====================
-            exec_valid, exec_stdout, exec_stderr = run_code(rejected, lang, tmp_dir)
-            if not exec_valid or exec_stderr:
-                execution_error_msg = exec_stderr or "执行失败但未返回错误信息"
-                # 调用大模型定位错误行
-                rel_error_lines = locate_execution_error_lines(rejected, execution_error_msg, prompt, lang)
-                offset = calculate_line_offset(rejected_raw)
-                abs_error_lines = [line + offset for line in rel_error_lines]
-
-                result = {
-                    "prompt": prompt,
-                    "chosen": chosen,
-                    "rejected": rejected_raw,
-                    "lang": lang,
-                    "error_type": "execution_error",
-                    "error_msg": execution_error_msg,
-                    "error_lines": abs_error_lines,
-                    "error_code": None  # 执行错误无error_code
-                }
-                
-                with lock:
-                    dpo_pairs.append(result)
-                    error_counts["execution_error"] += 1
-                return
+                    result = {
+                        "prompt": prompt,
+                        "chosen": chosen,
+                        "rejected": rejected_raw,
+                        "lang": lang,
+                        "error_type": "execution_error",
+                        "error_msg": execution_error_msg,
+                        "error_lines": [],
+                        "error_code": None  # 执行错误无error_code
+                    }
+                    
+                    with lock:
+                        dpo_pairs.append(result)
+                        error_counts["execution_error"] += 1
+                    return
 
             # ===================== 3. 检测逻辑错误 =====================
             # 运行chosen代码获取正确输出（chosen是真值，理论上无错误）
-            chosen_valid, chosen_stdout, chosen_stderr = run_code(chosen, lang, tmp_dir)
-            if not chosen_valid or chosen_stderr:
-                error_msg = chosen_stderr or "Chosen代码执行失败但未返回错误信息"
-                print(f"警告：Chosen代码执行失败（instruction前30字：{instruction[:30]}...），错误：{error_msg[:100]}...")
+            # chosen_valid, chosen_stdout, chosen_stderr = run_code(chosen, lang, tmp_dir)
+            # if not chosen_valid or chosen_stderr:
+            #     error_msg = chosen_stderr or "Chosen代码执行失败但未返回错误信息"
+            #     # print(f"警告：Chosen代码执行失败（instruction前30字：{instruction[:30]}...），错误：{error_msg[:100]}...")
                 
-                # 新增：保存错误的Chosen代码
-                with lock:
-                    save_bad_chosen_code(chosen, error_msg, instruction, lang, BAD_CHOSEN_DIR)
-                    error_counts["no_error"] += 1
-                return
+            #     # 新增：保存错误的Chosen代码
+            #     with lock:
+            #         # save_bad_chosen_code(chosen, error_msg, instruction, lang, BAD_CHOSEN_DIR)
+            #         error_counts["invalid_data"] += 1
+            #     return
 
-            # 对比输出是否一致
-            if not compare_outputs(chosen_stdout, exec_stdout):
-                # 核心流程：大模型提取错误代码行 → 逐行匹配获取行数
-                error_code_lines, rel_error_lines = get_logic_error_code_lines(
-                    chosen, rejected, chosen_stdout, exec_stdout, prompt, lang
-                )
-                # 转换为绝对行号
-                offset = calculate_line_offset(rejected_raw)
-                abs_error_lines = [line + offset for line in rel_error_lines]
+            # # 对比输出是否一致
+            # if not compare_outputs(chosen_stdout, exec_stdout):
+            #     # 核心流程：大模型提取错误代码行 → 逐行匹配获取行数
+            #     error_code_lines, rel_error_lines = get_logic_error_code_lines(
+            #         chosen, rejected, chosen_stdout, exec_stdout, prompt, lang
+            #     )
+            #     # 转换为绝对行号
+            #     offset = calculate_line_offset(rejected_raw)
+            #     abs_error_lines = [line + offset for line in rel_error_lines]
 
-                result = {
-                    "prompt": prompt,
-                    "chosen": chosen,
-                    "rejected": rejected_raw,
-                    "lang": lang,
-                    "error_type": "logic_error",
-                    "error_msg": (
-                        f"Chosen输出：{chosen_stdout}\n"
-                        f"Rejected输出：{exec_stdout}"
-                    ),
-                    "error_code": error_code_lines,  # 大模型返回的逐行错误代码
-                    "error_lines": abs_error_lines  # 匹配到的原始文本绝对行号
-                }
+            #     result = {
+            #         "prompt": prompt,
+            #         "chosen": chosen,
+            #         "rejected": rejected_raw,
+            #         "lang": lang,
+            #         "error_type": "logic_error",
+            #         "error_msg": (
+            #             f"Chosen输出：{chosen_stdout}\n"
+            #             f"Rejected输出：{exec_stdout}"
+            #         ),
+            #         "error_code": error_code_lines,  # 大模型返回的逐行错误代码
+            #         "error_lines": abs_error_lines  # 匹配到的原始文本绝对行号
+            #     }
                 
-                with lock:
-                    dpo_pairs.append(result)
-                    error_counts["logic_error"] += 1
-            else:
-                # 无错误（rejected代码正确，跳过）
-                with lock:
-                    error_counts["no_error"] += 1
+            #     with lock:
+            #         dpo_pairs.append(result)
+            #         error_counts["logic_error"] += 1
+            # else:
+            #     # 无错误（rejected代码正确，跳过）
+            #     with lock:
+            #         error_counts["no_error"] += 1
 
     except Exception as e:
         print(f"处理样本失败：{str(e)}")

@@ -1,6 +1,7 @@
 import json
 import argparse
 import sys
+import re
 
 # ANSI 颜色代码，用于终端高亮
 RED = '\033[91m'
@@ -10,6 +11,20 @@ BLUE = '\033[94m'
 CYAN = '\033[96m'
 RESET = '\033[0m'
 BOLD = '\033[1m'
+
+def calculate_line_offset(raw_text: str) -> int:
+    """与 preprocess_focused_dpo.py 保持一致的行号偏移量计算"""
+    if not raw_text:
+        return 0
+        
+    if "```" in raw_text:
+        pattern = r"```(?:\w+)?\n(.*?)```"
+        match = re.search(pattern, raw_text, re.DOTALL)
+        if match:
+            code_start_index = match.start(1)
+            prefix_text = raw_text[:code_start_index]
+            return prefix_text.count('\n')
+    return 0
 
 def print_code_with_highlight(code, error_lines, title="Code Snippet", force_full=False):
     """
@@ -25,7 +40,7 @@ def print_code_with_highlight(code, error_lines, title="Code Snippet", force_ful
     
     # 视窗逻辑：
     if force_full:
-        # [修改点] 强制全量展示，不计算 min/max
+        # 强制全量展示，不计算 min/max
         min_line = 0
         max_line = len(lines)
     elif error_lines:
@@ -42,8 +57,8 @@ def print_code_with_highlight(code, error_lines, title="Code Snippet", force_ful
         line_content = lines[i]
         # error_lines 是 0-indexed
         if error_lines and i in error_lines:
-            # 高亮显示错误行 (红底或者红字)
-            print(f"{RED}>> {i+1:4d} | {line_content}{RESET}  <-- [MASKED]")
+            # 高亮显示错误行
+            print(f"{RED}>> {i+1:4d} | {line_content}{RESET}  <-- [ERROR]")
         else:
             # 普通行
             print(f"{GREEN}   {i+1:4d} | {line_content}{RESET}")
@@ -56,7 +71,7 @@ def print_code_with_highlight(code, error_lines, title="Code Snippet", force_ful
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--file', type=str, default="./data/dpo_train_all.json", help="Path to the mined json file")
+    parser.add_argument('--file', type=str, default="./data/dpo_errors_pairs.json", help="Path to the mined json file")
     parser.add_argument('--type', type=str, default="all", choices=['all', 'compilation_error', 'execution_error', 'logic_error'])
     parser.add_argument('--limit', type=int, default=3, help="How many samples to show per type")
     args = parser.parse_args()
@@ -96,49 +111,32 @@ def main():
             prompt_snippet = item['prompt'][:100].replace('\n', ' ')
             print(f"Prompt: {prompt_snippet}...")
 
-            # =========================================================
-            # 针对 Logic Error 的增强展示：Chosen vs Rejected + Trace
-            # =========================================================
+            # 统一展示格式：错误信息 + 错误行 + 带高亮的代码
+            print(f"Error Message: {item.get('error_msg', 'N/A')}")
+            print(f"Error Lines  : {item.get('error_lines')}")
+            
+            # 新增：对 logic_error 打印 error_code
             if etype == 'logic_error':
-                print(f"\n{BOLD}COMPARISON VIEW:{RESET}")
-                
-                # 1. 展示 Chosen Code (基准) - [修改点] 强制全显示
+                error_code = item.get('error_code', [])
+                print(f"Error Code   : {error_code}")  # 打印错误代码片段
+            
+            # 展示 rejected 代码
+            print_code_with_highlight(
+                item.get('rejected', ''), 
+                # 计算显示的错误行（相对提取出的代码）
+                [line - calculate_line_offset(item.get('rejected', '')) for line in item.get('error_lines', [])], 
+                title=f"REJECTED CODE ({etype})",
+                force_full=False
+            )
+            
+            # 对执行错误和逻辑错误，额外展示 chosen 代码
+            if etype in ['execution_error', 'logic_error']:
                 print_code_with_highlight(
                     item.get('chosen', ''), 
-                    [], 
-                    title="CHOSEN CODE (Reference)",
-                    force_full=True  # <-- 开启全景模式
+                    error_lines=[],  # chosen 代码默认无错误行高亮
+                    title=f"CHOSEN CODE ({etype})",
+                    force_full=False
                 )
-
-                # 2. 展示 Rejected Code (预测) - [修改点] 强制全显示
-                print_code_with_highlight(
-                    item.get('rejected', ''), 
-                    item.get('error_lines', []), 
-                    title="REJECTED CODE (Prediction)",
-                    force_full=True  # <-- 开启全景模式，不再隐藏行
-                )
-
-                # 3. 展示 Trace 表格
-                print(f"{CYAN}{BOLD}--- TRACE DIVERGENCE ANALYSIS ---{RESET}")
-                print(item.get('error_msg', 'N/A'))
-                print(f"{CYAN}{'-'*60}{RESET}")
-
-            # =========================================================
-            # 其他错误类型 (Compilation / Execution) - 保持折叠
-            # =========================================================
-            else:
-                print(f"Error Message: {item.get('error_msg', 'N/A')}")
-                print(f"Error Lines  : {item.get('error_lines')}")
-                
-                print_code_with_highlight(
-                    item.get('rejected', ''), 
-                    item.get('error_lines', []), 
-                    title="REJECTED CODE",
-                    force_full=False # 编译错误代码可能很长且无关，保持折叠
-                )
-
-            # 交互式暂停
-            # input(f"\n{BOLD}[Press Enter to continue...]{RESET}")
 
 if __name__ == "__main__":
     main()
