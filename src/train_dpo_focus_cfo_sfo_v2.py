@@ -82,7 +82,7 @@ class FocusedDPOTrainer(DPOTrainer):
         
         log_msg = []
         log_msg.append(f"\n{'='*30} [Step {step} Mask Visualization] {'='*30}")
-        log_msg.append(f"Stats: Error(1.0): {num_error} | Protected(0.1): {num_protect} | Ignored(0.0): {num_ignore}")
+        log_msg.append(f"Stats: Error(5.0): {num_error} | Protected(0.1): {num_protect} | Ignored(0.0): {num_ignore}")
         log_msg.append("-" * 80)
 
         # 寻找 Response 起点
@@ -101,7 +101,7 @@ class FocusedDPOTrainer(DPOTrainer):
 
         # --- 核心逻辑：合并同类项 ---
         # 我们将连续的 token 如果权重类型相同，就拼接到一起再一次性打印
-        # 类型定义: 0=Ignore, 1=Protect(0.1), 2=Error(1.0)
+        # 类型定义: 0=Ignore, 1=Protect(0.1), 2=Error(5.0)
         
         def get_type(w):
             if w > 0.9: return 2 # Error
@@ -282,8 +282,8 @@ def preprocess_data(examples, tokenizer, max_length=2048):
         
         prompt_len = len(tokenizer(prompt, add_special_tokens=False, truncation=True, max_length=max_length)['input_ids'])
         
-        # Adaptive Masking: Global Error -> 1.0, Local Error -> 0.1
-        default_weight = 1.0 if not error_lines else 0.1
+        # Adaptive Masking: Global Error -> 5.0, Local Error -> 0.1
+        default_weight = 5.0 if not error_lines else 0.1
         mask = [default_weight] * len(tokenized['input_ids'])
         
         if error_lines:
@@ -309,7 +309,7 @@ def preprocess_data(examples, tokenizer, max_length=2048):
                 for line_idx, (l_s, l_e) in enumerate(line_ranges):
                     if l_s <= mid < l_e:
                         if line_idx in target_lines:
-                            mask[i] = 1.0 
+                            mask[i] = 5.0 
                         break
         
         if len(mask) > 0:
