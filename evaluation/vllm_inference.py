@@ -7,28 +7,54 @@ import torch
 
 def generate_batch(examples, tokenizer, llm, model: str):
     stop = None
-    # if 'deepseek-coder' in model:
-    #     prompts = [
-    #         tokenizer.apply_chat_template([{'role': 'user', 'content': ex['instruction'] + '\n' + ex['input'] }], tokenize=False, add_generation_prompt=True)
-    #         for ex in examples
-    #     ]
-    # else:
-    #     raise NotImplementedError()
-    prompts = [
-        tokenizer.apply_chat_template([{'role': 'user', 'content': ex['instruction'] + '\n' + ex['input'] }], tokenize=False, add_generation_prompt=True)
-        for ex in examples
-    ]
+    
+    # [关键修改] 定义与 SFT train.py 完全一致的 Alpaca 模板
+    # 必须包含 Preamble (Below is an instruction...)
+    ALPACA_PROMPT_DICT = {
+        "prompt_input": (
+            "Below is an instruction that describes a task, paired with an input that provides further context. "
+            "Write a response that appropriately completes the request.\n\n"
+            "### Instruction:\n{instruction}\n\n### Input:\n{input}\n\n### Response:"
+        ),
+        "prompt_no_input": (
+            "Below is an instruction that describes a task. "
+            "Write a response that appropriately completes the request.\n\n"
+            "### Instruction:\n{instruction}\n\n### Response:"
+        ),
+    }
+
+    prompts = []
+    for ex in examples:
+        # 提取字段，做简单的防御性处理
+        instruction = ex.get('instruction', '')
+        input_data = ex.get('input', '')
+
+        # 逻辑判断：如果 input 字段存在且不为空，使用 prompt_input 模板
+        if input_data and input_data.strip():
+            prompt = ALPACA_PROMPT_DICT["prompt_input"].format(
+                instruction=instruction,
+                input=input_data
+            )
+        else:
+            # 否则使用 prompt_no_input 模板
+            prompt = ALPACA_PROMPT_DICT["prompt_no_input"].format(
+                instruction=instruction
+            )
+        
+        prompts.append(prompt)
 
     # Create a sampling params object.
     sampling_params = SamplingParams(
         temperature=0.0,
-        # top_p=0.95,
-        # top_p=1e-9,
         max_tokens=2048,
         stop=stop
     )
 
-    print("Sample prompt: {}".format(prompts[0]))
+    # 打印一条 Prompt 确认格式是否正确 (包含 Preamble 和 ### Input:)
+    print("="*40)
+    print("Inference Prompt Preview:\n{}".format(prompts[0][:500]))
+    print("="*40)
+
     outputs = llm.generate(prompts, sampling_params)
     for i in range(len(examples)):
         examples[i]['generated_output'] = outputs[i].outputs[0].text

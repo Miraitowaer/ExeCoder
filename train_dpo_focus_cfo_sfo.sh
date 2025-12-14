@@ -7,15 +7,15 @@ nvidia-smi
 # 路径配置
 ROOT="/data/private/ExeCoder"
 SFT_MODEL_PATH="/data/private/ExeCoder/results/Deepseek-coder-6.7b-instruct-code/checkpoint-400"
-DATA_PATH="$ROOT/data/dpo_pairs_ranked_v4.json"
-OUTPUT_DIR="$ROOT/results/dpo_ranked_pure"
+DATA_PATH="$ROOT/data/dpo_pairs_strategy1_on_policy.json"
+OUTPUT_DIR="$ROOT/results/dpo_focus_cfo_sfo_v3"
 
 # 创建日志目录
 timestamp() {
   date +"%Y-%m-%d_%H-%M-%S-%N" # current time
 }
 
-LOG_PATH=$ROOT/loginfo/dpo_$(timestamp)-$RANDOM
+LOG_PATH=$ROOT/loginfo/dpo_cfo_sfo_$(timestamp)-$RANDOM
 mkdir -p "$LOG_PATH"
 
 echo "Starting DPO Training..."
@@ -27,7 +27,7 @@ echo "Model: $SFT_MODEL_PATH"
 # 2. 开启 gradient_checkpointing
 # 3. 使用 bf16 (L40 支持)
 # 4. 调整学习率 (DPO 通常比 SFT 低)
-deepspeed --master_port=29501 src/train_dpo.py \
+deepspeed --master_port=29501 src/train_dpo_focus_cfo_sfo.py \
     --model_name_or_path $SFT_MODEL_PATH \
     --data_path $DATA_PATH \
     --output_dir $OUTPUT_DIR \
@@ -43,12 +43,14 @@ deepspeed --master_port=29501 src/train_dpo.py \
     --beta 0.1 \
     --deepspeed src/configs/deepspeed_config_zero3.json \
     --bf16 True \
+    --remove_unused_columns False \
     --gradient_checkpointing True \
     --report_to "tensorboard" \
     > "$LOG_PATH/out.txt" 2>&1
 
+    # --loss_type "ipo" \
 #debug
-# deepspeed --master_port=29501 src/train_dpo.py \
+# deepspeed --master_port=29501 src/train_dpo_focus.py \
 #     --model_name_or_path $SFT_MODEL_PATH \
 #     --data_path $DATA_PATH \
 #     --output_dir $OUTPUT_DIR \
@@ -64,6 +66,7 @@ deepspeed --master_port=29501 src/train_dpo.py \
 #     --beta 0.1 \
 #     --deepspeed src/configs/deepspeed_config_zero3.json \
 #     --bf16 True \
+#     --remove_unused_columns False \
 #     --gradient_checkpointing True \
 #     --report_to "tensorboard" \
 #     > "$LOG_PATH/out.txt" 2>&1

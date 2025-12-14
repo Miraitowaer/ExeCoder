@@ -132,7 +132,7 @@ def print_stats_table(stats):
 def main():
     # 解析命令行参数
     parser = argparse.ArgumentParser(description="统计JSON数据集中不同错误类型下各语言的样本数量")
-    parser.add_argument('--file', type=str, required=False, default="/data/private/ExeCoder/data/dpo_pairs_strategy1_on_policy.json", help="JSON数据集文件路径（必填）")
+    parser.add_argument('--file', type=str, required=False, default="/data/private/ExeCoder/data/dpo_pairs_ranked_v4.json", help="JSON数据集文件路径（必填）")
     args = parser.parse_args()
 
     # 执行统计
