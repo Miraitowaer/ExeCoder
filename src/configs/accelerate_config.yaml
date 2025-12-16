@@ -1,0 +1,18 @@
+compute_environment: LOCAL_MACHINE
+debug: false
+deepspeed_config:
+  deepspeed_config_file: src/configs/deepspeed_config_zero2.json
+  zero3_init_flag: false
+distributed_type: DEEPSPEED
+downcast_bf16: 'no'
+machine_rank: 0
+main_training_function: main
+# 注意：mixed_precision 也移除了，因为 deepspeed json 里已经定义了 "bf16": {"enabled": true}
+num_machines: 1
+# 下面这个 8 只是占位符，我们的启动脚本会用 --num_processes 覆盖它
+num_processes: 8
+rdzv_backend: static
+same_network: true
+tpu_env: []
+tpu_use_cluster: false
+use_cpu: false

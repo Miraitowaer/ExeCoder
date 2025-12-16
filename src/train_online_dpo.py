@@ -1,7 +1,6 @@
 import os
 import torch
 import torch.nn.functional as F
-import difflib
 import multiprocessing
 import subprocess
 import tempfile
@@ -9,13 +8,17 @@ import re
 import logging
 import time
 import gc
+import difflib # 仅用于选择 Hard Negative，不再用于 Mask
 from datetime import timedelta
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import List, Dict, Tuple, Optional
 
+# Accelerate & Distributed
 from accelerate import Accelerator, InitProcessGroupKwargs
 from accelerate.utils import DummyOptim
+
+# Transformers & Data
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 from transformers import (
@@ -50,10 +53,12 @@ class ScriptArguments:
     data_path: str = field(metadata={"help": "训练数据路径 (JSON)"})
     output_dir: str = field(metadata={"help": "输出目录"})
     
-    num_generations: int = field(default=4)
+    # 采样配置
+    num_generations: int = field(default=2, metadata={"help": "推荐设为2以加速"})
     temperature: float = field(default=0.8)
-    max_new_tokens: int = field(default=512)
+    max_new_tokens: int = field(default=384)
     
+    # 训练配置
     learning_rate: float = field(default=5e-7)
     per_device_train_batch_size: int = field(default=1) 
     gradient_accumulation_steps: int = field(default=8)
@@ -130,58 +135,52 @@ class CodeExecutor:
             else: fail_list.append(cand)
         return pass_list, fail_list
 
-# ================= 模块 B: Mask 处理器 (保持不变) =================
-class MaskProcessor:
+# ================= 模块 B: 标准 DPO 处理器 (Standard DPO) =================
+# [Change]: 替换了原来的 MaskProcessor
+class StandardDPOProcessor:
     def __init__(self, tokenizer, max_length):
         self.tokenizer = tokenizer
         self.max_length = max_length
 
-    def get_dual_diff_ranges(self, chosen_code: str, rejected_code: str):
-        chosen_lines = chosen_code.splitlines(keepends=True)
-        rejected_lines = rejected_code.splitlines(keepends=True)
-        c_offsets, pos = [], 0
-        for line in chosen_lines: c_offsets.append((pos, pos + len(line))); pos += len(line)
-        r_offsets, pos = [], 0
-        for line in rejected_lines: r_offsets.append((pos, pos + len(line))); pos += len(line)
-        matcher = difflib.SequenceMatcher(None, chosen_lines, rejected_lines)
-        c_ranges, r_ranges = [], []
-        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-            if tag == 'equal': continue 
-            elif tag == 'replace':
-                if i1 < len(c_offsets): c_ranges.append((c_offsets[i1][0], c_offsets[min(i2-1, len(c_offsets)-1)][1]))
-                if j1 < len(r_offsets): r_ranges.append((r_offsets[j1][0], r_offsets[min(j2-1, len(r_offsets)-1)][1]))
-            elif tag == 'insert':
-                if j1 < len(r_offsets): r_ranges.append((r_offsets[j1][0], r_offsets[min(j2-1, len(r_offsets)-1)][1]))
-            elif tag == 'delete':
-                if i1 < len(c_offsets): c_ranges.append((c_offsets[i1][0], c_offsets[min(i2-1, len(c_offsets)-1)][1]))
-        return c_ranges, r_ranges
-
-    def tokenize_and_mask(self, prompt: str, chosen: str, rejected: str):
-        c_focus, r_focus = self.get_dual_diff_ranges(chosen, rejected)
-        c_enc = self.tokenizer(prompt + chosen, truncation=True, max_length=self.max_length, return_offsets_mapping=True, return_tensors='pt')
-        r_enc = self.tokenizer(prompt + rejected, truncation=True, max_length=self.max_length, return_offsets_mapping=True, return_tensors='pt')
+    def tokenize_pair(self, prompt: str, chosen: str, rejected: str):
+        """
+        标准 DPO Tokenization:
+        Label 在 Prompt 部分为 -100，在 Response 部分为 Token ID
+        """
+        # 1. 拼接文本
+        c_full = prompt + chosen
+        r_full = prompt + rejected
+        
+        # 2. 编码 (Truncation enabled)
+        c_enc = self.tokenizer(c_full, truncation=True, max_length=self.max_length, return_offsets_mapping=True, return_tensors='pt')
+        r_enc = self.tokenizer(r_full, truncation=True, max_length=self.max_length, return_offsets_mapping=True, return_tensors='pt')
+        
         prompt_len = len(prompt)
-        def apply_mask(enc, focus_ranges):
+        
+        def process_one(enc):
             input_ids = enc.input_ids[0]
-            labels = input_ids.clone(); labels[:] = IGNORE_INDEX 
+            labels = input_ids.clone()
             offsets = enc.offset_mapping[0]
-            resp_idx = 0
+            
+            # 找到 Prompt 结束的位置
+            # 任何 offset 的 start < prompt_len 的都属于 prompt (大致逻辑)
+            resp_start_idx = 0
             for i, (s, e) in enumerate(offsets):
-                if s >= prompt_len: resp_idx = i; break
-            for i in range(resp_idx, len(offsets)):
-                s, e = offsets[i]
-                if s == 0 and e == 0: continue
-                token_s, token_e = s - prompt_len, e - prompt_len
-                is_focus = False
-                for (fs, fe) in focus_ranges:
-                    if max(token_s, fs) < min(token_e, fe): is_focus = True; break
-                if is_focus: labels[i] = input_ids[i]
+                if s >= prompt_len:
+                    resp_start_idx = i
+                    break
+            
+            # Mask Prompt (设为 -100)
+            labels[:resp_start_idx] = IGNORE_INDEX
+            
             return input_ids, enc.attention_mask[0], labels
-        c_ids, c_mask, c_lbl = apply_mask(c_enc, c_focus)
-        r_ids, r_mask, r_lbl = apply_mask(r_enc, r_focus)
+
+        c_ids, c_mask, c_lbl = process_one(c_enc)
+        r_ids, r_mask, r_lbl = process_one(r_enc)
+        
         return c_ids, c_mask, c_lbl, r_ids, r_mask, r_lbl
 
-# ================= 模块 C: 训练逻辑 (已修正指标计算) =================
+# ================= 模块 C: 训练逻辑 (标准 DPO 计算) =================
 def compute_dpo_loss(model, ref_model, batch, beta=0.1):
     policy_logits = model(input_ids=batch['input_ids'], attention_mask=batch['attention_mask']).logits
     with torch.no_grad():
@@ -192,12 +191,14 @@ def compute_dpo_loss(model, ref_model, batch, beta=0.1):
     logits_r = ref_logits[:, :-1, :]
     labels_shifted = labels[:, 1:]
     
+    # 将 -100 的位置置为 0，防止 gather 越界
     safe_labels = labels_shifted.clone()
     safe_labels[safe_labels == IGNORE_INDEX] = 0
     
     per_token_logps_p = torch.gather(logits_p.log_softmax(-1), 2, safe_labels.unsqueeze(2)).squeeze(2)
     per_token_logps_r = torch.gather(logits_r.log_softmax(-1), 2, safe_labels.unsqueeze(2)).squeeze(2)
     
+    # 只有 Response 部分才有 Loss (labels != -100)
     valid_mask = (labels_shifted != IGNORE_INDEX).float()
     
     policy_logps = (per_token_logps_p * valid_mask).sum(-1)
@@ -208,19 +209,15 @@ def compute_dpo_loss(model, ref_model, batch, beta=0.1):
     chosen_ref = ref_logps[::2]
     rejected_ref = ref_logps[1::2]
     
-    # === [新增] DPO 指标计算 ===
-    # 1. Rewards
+    # DPO Loss
     chosen_rewards = beta * (chosen_policy - chosen_ref)
     rejected_rewards = beta * (rejected_policy - rejected_ref)
     
-    # 2. Accuracy & Margin
     reward_accuracies = (chosen_rewards > rejected_rewards).float()
     margins = chosen_rewards - rejected_rewards
     
-    # 3. Loss
     loss = -F.logsigmoid(margins).mean()
     
-    # 构造返回字典
     metrics = {
         "rewards/chosen": chosen_rewards.mean().item(),
         "rewards/rejected": rejected_rewards.mean().item(),
@@ -237,6 +234,7 @@ def main():
     args = parser.parse_args_into_dataclasses()[0]
     set_seed(42)
     
+    # [Config]: 保持 3 小时超时，确保稳定
     ddp_kwargs = InitProcessGroupKwargs(timeout=timedelta(minutes=180))
     
     accelerator = Accelerator(
@@ -249,8 +247,7 @@ def main():
     if accelerator.is_main_process:
         if not os.path.exists(args.output_dir): os.makedirs(args.output_dir)
         accelerator.init_trackers(project_name="runs", config=vars(args))
-        logger.info(f"Initialized with Timeout=180min. Output dir: {args.output_dir}")
-        # logger.info("Initialized Online Mask-DPO Trainer with Memory Optimization & Logging")
+        logger.info(f"Initialized STANDARD Online DPO Trainer (No Mask). Output: {args.output_dir}")
 
     # 1. 加载模型
     model = AutoModelForCausalLM.from_pretrained(args.sft_model_path, torch_dtype=torch.bfloat16, trust_remote_code=True)
@@ -276,7 +273,8 @@ def main():
     model, optimizer, dataloader = accelerator.prepare(model, optimizer, dataloader)
     
     executor_tool = CodeExecutor()
-    masker = MaskProcessor(tokenizer, args.max_length)
+    # [Change]: 使用标准 DPO Processor
+    processor = StandardDPOProcessor(tokenizer, args.max_length)
     
     global_step = 0
     model.train()
@@ -305,6 +303,7 @@ def main():
                 
                 with torch.no_grad():
                     inputs_tokenized = tokenizer(prompt, return_tensors="pt").to(accelerator.device)
+                    # 临时开启 Cache 加速生成
                     gen_ids = accelerator.unwrap_model(model).generate(
                         **inputs_tokenized,
                         max_new_tokens=args.max_new_tokens,
@@ -329,20 +328,23 @@ def main():
                 if not fails: continue 
                 
                 chosen = passes[0] if passes else gt_code
+                # 依然使用 Hard Negative 策略选择 Rejected，但不做 Diff Mask
                 rejected = max(fails, key=lambda x: difflib.SequenceMatcher(None, chosen, x).ratio())
                 if chosen == rejected: continue
                 
-                c_ids, c_mask, c_lbl, r_ids, r_mask, r_lbl = masker.tokenize_and_mask(prompt, chosen, rejected)
+                # === Phase 2: Standard Tokenization (无 Mask) ===
+                c_ids, c_mask, c_lbl, r_ids, r_mask, r_lbl = processor.tokenize_pair(prompt, chosen, rejected)
+                
                 batch_input_ids.extend([c_ids, r_ids])
                 batch_masks.extend([c_mask, r_mask])
                 batch_labels.extend([c_lbl, r_lbl])
                 mined_count += 1
             
-            # === Phase 2: Training (训练) ===
+            # === Phase 3: Training (训练) ===
             torch.cuda.empty_cache()
             gc.collect()
 
-            # [FIXED]: 即使 mined_count == 0 也要执行 backward 以维持 DDP 同步
+            # DDP Sync Logic
             if mined_count > 0:
                 max_len = max([t.size(0) for t in batch_input_ids])
                 padded_ids = [F.pad(t, (0, max_len-t.size(0)), value=tokenizer.pad_token_id) for t in batch_input_ids]
@@ -372,13 +374,13 @@ def main():
                         log_data.update(metrics)
                         accelerator.log(log_data, step=global_step)
             else:
-                # DDP Sync: Run dummy backward
+                # Dummy Sync
                 dummy_input = tokenizer(instructions[0], return_tensors="pt").input_ids.to(accelerator.device)
                 if dummy_input.size(1) > 10: dummy_input = dummy_input[:, :10]
                 
                 with accelerator.accumulate(model):
                     dummy_out = model(dummy_input)
-                    dummy_loss = dummy_out.logits.mean() * 0.0 # Zero loss
+                    dummy_loss = dummy_out.logits.mean() * 0.0
                     accelerator.backward(dummy_loss)
                     optimizer.step()
                     optimizer.zero_grad()
@@ -389,16 +391,10 @@ def main():
             global_step += 1
             
             if global_step % args.save_steps == 0:
-                # 1. 显式等待所有卡到达这里
                 accelerator.wait_for_everyone()
-                
                 save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
-                
-                # 2. [核心修正] 所有人一起调用 save_state
-                # DeepSpeed 需要所有卡参与才能保存 ZeRO 状态
                 accelerator.save_state(save_path)
                 
-                # 3. 只有主进程负责打印日志和保存 Tokenizer
                 if accelerator.is_main_process:
                     tokenizer.save_pretrained(save_path)
                     logger.info(f"Checkpoint saved to {save_path}")
