@@ -237,25 +237,25 @@ def main():
     args = parser.parse_args_into_dataclasses()[0]
     set_seed(42)
     
+    # [FIX 1] 设置 3 小时超时，防止 DeepSpeed 保存或生成太慢导致 NCCL 崩溃
     ddp_kwargs = InitProcessGroupKwargs(timeout=timedelta(minutes=180))
     
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps, 
         log_with="tensorboard", 
         project_dir=args.output_dir,
-        kwargs_handlers=[ddp_kwargs]
+        kwargs_handlers=[ddp_kwargs] # 注入超时配置
     )
 
     if accelerator.is_main_process:
         if not os.path.exists(args.output_dir): os.makedirs(args.output_dir)
         accelerator.init_trackers(project_name="runs", config=vars(args))
-        logger.info(f"Initialized with Timeout=180min. Output dir: {args.output_dir}")
-        # logger.info("Initialized Online Mask-DPO Trainer with Memory Optimization & Logging")
+        logger.info(f"Initialized Online Mask-DPO Trainer. Output: {args.output_dir}")
 
     # 1. 加载模型
     model = AutoModelForCausalLM.from_pretrained(args.sft_model_path, torch_dtype=torch.bfloat16, trust_remote_code=True)
     
-    # 显存优化
+    # 显存优化配置
     model.gradient_checkpointing_enable()
     model.enable_input_require_grads()
     model.config.use_cache = False 
@@ -293,6 +293,7 @@ def main():
             batch_input_ids, batch_labels, batch_masks = [], [], []
             mined_count = 0
             
+            # 清理显存以进行生成
             torch.cuda.empty_cache() 
             
             for i, instr in enumerate(instructions):
@@ -305,6 +306,7 @@ def main():
                 
                 with torch.no_grad():
                     inputs_tokenized = tokenizer(prompt, return_tensors="pt").to(accelerator.device)
+                    # 临时开启 Cache 加速生成
                     gen_ids = accelerator.unwrap_model(model).generate(
                         **inputs_tokenized,
                         max_new_tokens=args.max_new_tokens,
@@ -342,7 +344,7 @@ def main():
             torch.cuda.empty_cache()
             gc.collect()
 
-            # [FIXED]: 即使 mined_count == 0 也要执行 backward 以维持 DDP 同步
+            # [FIX 2] DDP 同步逻辑：即使没挖到数据，也要跑 Dummy Backward
             if mined_count > 0:
                 max_len = max([t.size(0) for t in batch_input_ids])
                 padded_ids = [F.pad(t, (0, max_len-t.size(0)), value=tokenizer.pad_token_id) for t in batch_input_ids]
@@ -372,13 +374,13 @@ def main():
                         log_data.update(metrics)
                         accelerator.log(log_data, step=global_step)
             else:
-                # DDP Sync: Run dummy backward
+                # Dummy Backward 保持 NCCL 队列同步
                 dummy_input = tokenizer(instructions[0], return_tensors="pt").input_ids.to(accelerator.device)
                 if dummy_input.size(1) > 10: dummy_input = dummy_input[:, :10]
                 
                 with accelerator.accumulate(model):
                     dummy_out = model(dummy_input)
-                    dummy_loss = dummy_out.logits.mean() * 0.0 # Zero loss
+                    dummy_loss = dummy_out.logits.mean() * 0.0
                     accelerator.backward(dummy_loss)
                     optimizer.step()
                     optimizer.zero_grad()
@@ -388,25 +390,46 @@ def main():
 
             global_step += 1
             
+            # [FIX 3] 周期性保存 (Checkpoints) - 修复死锁
             if global_step % args.save_steps == 0:
-                # 1. 显式等待所有卡到达这里
+                # 等待所有卡
                 accelerator.wait_for_everyone()
                 
                 save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
                 
-                # 2. [核心修正] 所有人一起调用 save_state
-                # DeepSpeed 需要所有卡参与才能保存 ZeRO 状态
+                # DeepSpeed ZeRO-2 要求所有 rank 都调用 save_state
                 accelerator.save_state(save_path)
                 
-                # 3. 只有主进程负责打印日志和保存 Tokenizer
+                # 只有主进程打印日志和保存 Tokenizer
                 if accelerator.is_main_process:
                     tokenizer.save_pretrained(save_path)
                     logger.info(f"Checkpoint saved to {save_path}")
+
+    # ================= 训练结束，保存最终模型 =================
     
+    # 1. 强制同步
+    accelerator.wait_for_everyone()
+    
+    # 2. 解包模型 (去除 DDP/ZeRO 壳)
+    unwrapped_model = accelerator.unwrap_model(model)
+    
+    # 3. 主进程保存为 Safetensors (用于推理)
     if accelerator.is_main_process:
-        accelerator.save_state(args.output_dir)
+        logger.info("Training finished. Saving final model to Safetensors...")
+        
+        unwrapped_model.save_pretrained(
+            args.output_dir,
+            is_main_process=True,
+            save_function=accelerator.save,
+            safe_serialization=True,      # [FIX 4] 直接生成 .safetensors
+            max_shard_size="10GB"
+        )
+        
         tokenizer.save_pretrained(args.output_dir)
-        accelerator.end_training()
+        logger.info(f"Final model saved to {args.output_dir}")
+
+    # 4. 结束训练
+    accelerator.end_training()
 
 if __name__ == "__main__":
     multiprocessing.set_start_method('spawn', force=True)

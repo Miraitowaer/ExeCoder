@@ -8,10 +8,10 @@ BASE_MODEL_PATH = "/data/private/ExeCoder/results/Deepseek-coder-6.7b-instruct-c
 
 # 2. 你的 DeepSpeed Checkpoint 路径
 # 注意：指向 checkpoint-500 目录即可
-CHECKPOINT_PATH = "/data/private/ExeCoder/results/dpo_online_mask_v1/checkpoint-500"
+CHECKPOINT_PATH = "/data/private/ExeCoder/results/dpo_online_v1/checkpoint-500"
 
 # 3. 最终输出路径
-OUTPUT_PATH = "/data/private/ExeCoder/results/dpo_online_mask_v1/checkpoint-500-hf"
+OUTPUT_PATH = "/data/private/ExeCoder/results/dpo_online_v1/checkpoint-500-hf"
 # =========================================
 
 def main():

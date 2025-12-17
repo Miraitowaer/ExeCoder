@@ -8,7 +8,7 @@ timestamp() {
 }
 
 # 创建唯一的日志目录
-LOG_PATH=$ROOT/loginfo/dpo_masked_online_$(timestamp)-$RANDOM
+LOG_PATH=$ROOT/loginfo/dpo_online_$(timestamp)-$RANDOM
 mkdir -p "$LOG_PATH"
 
 # 创建一个空的输出文件 (可选，tee 会自动创建)
@@ -23,18 +23,17 @@ echo "Logging to: $LOG_PATH/out.txt"
 # 基础模型和数据路径
 SFT_MODEL_PATH="/data/private/ExeCoder/results/Deepseek-coder-6.7b-instruct-code/checkpoint-327"
 DATA_PATH="/data/private/ExeCoder/data/split_dpo_data.json"
-OUTPUT_DIR="/data/private/ExeCoder/results/dpo_online_mask_v2"
+OUTPUT_DIR="/data/private/ExeCoder/results/dpo_online_v1"
 
 # ================= 启动命令 =================
 # 注意末尾的 2>&1 | tee ... 是关键，它将标准输出和错误都同时打印到屏幕和文件
-accelerate launch --config_file src/configs/accelerate_config.yaml src/train_online_dpo_mask.py \
+accelerate launch --config_file src/configs/accelerate_config.yaml src/train_online_dpo.py \
     --sft_model_path "$SFT_MODEL_PATH" \
     --data_path "$DATA_PATH" \
     --output_dir "$OUTPUT_DIR" \
     --num_generations 2 \
     --max_new_tokens 384 \
-    --temperature 1.2 \
-    --beta 0.05 \
+    --temperature 0.8 \
     --per_device_train_batch_size 1 \
     --gradient_accumulation_steps 8 \
     --learning_rate 5e-7 \
