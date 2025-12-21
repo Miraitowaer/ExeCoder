@@ -6,9 +6,9 @@ nvidia-smi
 
 # 路径配置
 ROOT="/data/private/ExeCoder"
-SFT_MODEL_PATH="/data/private/ExeCoder/results/Deepseek-coder-6.7b-instruct-code/checkpoint-400"
-DATA_PATH="$ROOT/data/dpo_pairs_ranked_v4.json"
-OUTPUT_DIR="$ROOT/results/dpo_ranked_pure"
+SFT_MODEL_PATH="/data/private/ExeCoder/results/Qwen2.5-Coder-7B-Instruct-code/checkpoint-327"
+DATA_PATH="$ROOT/data/merged_result.json"
+OUTPUT_DIR="$ROOT/results/qwen_dpo_merged_result"
 
 # 创建日志目录
 timestamp() {
