@@ -31,18 +31,18 @@ DEFAULT_PAD_TOKEN = "[PAD]"
 DEFAULT_EOS_TOKEN = "</s>"
 DEFAULT_BOS_TOKEN = "</s>"
 DEFAULT_UNK_TOKEN = "</s>"
-PROMPT_DICT = {
-    "prompt_input": (
-        "Below is an instruction that describes a task, paired with an input that provides further context. "
-        "Write a response that appropriately completes the request.\n\n"
-        "### Instruction:\n{instruction}\n\n### Input:\n{input}\n\n### Response:"
-    ),
-    "prompt_no_input": (
-        "Below is an instruction that describes a task. "
-        "Write a response that appropriately completes the request.\n\n"
-        "### Instruction:\n{instruction}\n\n### Response:"
-    ),
-}
+# PROMPT_DICT = {
+#     "prompt_input": (
+#         "Below is an instruction that describes a task, paired with an input that provides further context. "
+#         "Write a response that appropriately completes the request.\n\n"
+#         "### Instruction:\n{instruction}\n\n### Input:\n{input}\n\n### Response:"
+#     ),
+#     "prompt_no_input": (
+#         "Below is an instruction that describes a task. "
+#         "Write a response that appropriately completes the request.\n\n"
+#         "### Instruction:\n{instruction}\n\n### Response:"
+#     ),
+# }
 # PROMPT_DICT = {
 #     "prompt_input": (
 #         "{instruction}\n{input}"
@@ -51,6 +51,27 @@ PROMPT_DICT = {
 #         "{instruction}"
 #     ),
 # }
+
+DEFAULT_SYSTEM_PROMPT = "You are a helpful coding assistant. Provide only the correct code solution."
+
+PROMPT_DICT = {
+    # 场景 A: 包含 instruction (题目) 和 input (具体输入/上下文)
+    "prompt_input": (
+        "<s>[INST] <<SYS>>\n"
+        "{system_prompt}\n"
+        "<</SYS>>\n\n"
+        "{instruction}\n\n"
+        "{input} [/INST]"
+    ),
+    
+    # 场景 B: 只包含 instruction (题目)
+    "prompt_no_input": (
+        "<s>[INST] <<SYS>>\n"
+        "{system_prompt}\n"
+        "<</SYS>>\n\n"
+        "{instruction} [/INST]"
+    ),
+}
 
 
 @dataclass
@@ -167,15 +188,32 @@ class DataCollatorForSupervisedDataset(object):
 
 def train_tokenize_function(examples, tokenizer):
     prompt_input, prompt_no_input = PROMPT_DICT["prompt_input"], PROMPT_DICT["prompt_no_input"]
+    # if 'input' in examples:
+    #     sources = [
+    #         prompt_input.format_map(dict(instruction=instruction, input=input)) if input != "" \
+    #         else prompt_no_input.format_map(dict(instruction=instruction)) \
+    #         for instruction, input in zip(examples['instruction'], examples['input']) 
+    #     ]
+    # else:
+    #     sources = [
+    #         prompt_no_input.format_map(dict(instruction=instruction)) \
+    #         for instruction in examples['instruction']
+    #     ]
     if 'input' in examples:
         sources = [
-            prompt_input.format_map(dict(instruction=instruction, input=input)) if input != "" \
-            else prompt_no_input.format_map(dict(instruction=instruction)) \
-            for instruction, input in zip(examples['instruction'], examples['input']) 
+            prompt_input.format_map(
+                dict(instruction=instruction, input=input, system_prompt=DEFAULT_SYSTEM_PROMPT)
+            ) if input != "" \
+            else prompt_no_input.format_map(
+                dict(instruction=instruction, system_prompt=DEFAULT_SYSTEM_PROMPT)
+            ) \
+            for instruction, input in zip(examples['instruction'], examples['input'])
         ]
     else:
         sources = [
-            prompt_no_input.format_map(dict(instruction=instruction)) \
+            prompt_no_input.format_map(
+                dict(instruction=instruction, system_prompt=DEFAULT_SYSTEM_PROMPT)
+            ) \
             for instruction in examples['instruction']
         ]
     targets = [f"{output}{tokenizer.eos_token}" for output in examples['output']]
@@ -204,7 +242,7 @@ def train():
             tokenizer=tokenizer,
             model=model,
         )
-    if "llama" in model_args.model_name_or_path:
+    if "Llama" in model_args.model_name_or_path:
         tokenizer.add_special_tokens(
             {
                 "eos_token": DEFAULT_EOS_TOKEN,
@@ -212,6 +250,8 @@ def train():
                 "unk_token": DEFAULT_UNK_TOKEN,
             }
         )
+        tokenizer.add_bos_token = False 
+        tokenizer.add_eos_token = False
 
     raw_train_datasets = load_dataset('json', data_files=data_args.data_path, split="train", cache_dir=training_args.cache_dir)
     raw_dev_datasets = load_dataset('json', data_files=data_args.dev_data_path, split="train", cache_dir=training_args.cache_dir) if data_args.dev_data_path else None

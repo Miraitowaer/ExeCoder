@@ -26,7 +26,7 @@ MODALs=("code")
 MODELS=("deepseek-coder-6.7b-instruct")
 # models=("code")
 # models=("Qwen2.5-Coder-7B-Instruct")
-models=("Deepseek-coder-6.7b-instruct-code")
+models=("CodeLlama-7B-Instruct")
 
 
 length=${#MODALs[@]}
@@ -44,23 +44,23 @@ do
       --eval_file $EVAL_PATH/$model-$data_file1 \
       --model $model
 
-  python $ROOT/evaluation/evaluator/execution_based/transcoder_eval.py \
-      --source_lang "python" \
-      --target_lang "cpp" \
-      --eval_file $EVAL_PATH/$model-$data_file2 \
-      --model $model
+#   python $ROOT/evaluation/evaluator/execution_based/transcoder_eval.py \
+#       --source_lang "python" \
+#       --target_lang "cpp" \
+#       --eval_file $EVAL_PATH/$model-$data_file2 \
+#       --model $model
 
-  python $ROOT/evaluation/evaluator/execution_based/transcoder_eval.py \
-      --source_lang "cpp" \
-      --target_lang "java" \
-      --eval_file $EVAL_PATH/$model-$data_file3 \
-      --model $model
+#   python $ROOT/evaluation/evaluator/execution_based/transcoder_eval.py \
+#       --source_lang "cpp" \
+#       --target_lang "java" \
+#       --eval_file $EVAL_PATH/$model-$data_file3 \
+#       --model $model
 
-  python $ROOT/evaluation/evaluator/execution_based/transcoder_eval.py \
-      --source_lang "java" \
-      --target_lang "cpp" \
-      --eval_file $EVAL_PATH/$model-$data_file4 \
-      --model $model
+#   python $ROOT/evaluation/evaluator/execution_based/transcoder_eval.py \
+#       --source_lang "java" \
+#       --target_lang "cpp" \
+#       --eval_file $EVAL_PATH/$model-$data_file4 \
+#       --model $model
 
   python $ROOT/evaluation/evaluator/execution_based/transcoder_eval.py \
       --source_lang "java" \
@@ -68,10 +68,10 @@ do
       --eval_file $EVAL_PATH/$model-$data_file5 \
       --model $model
 
-  python $ROOT/evaluation/evaluator/execution_based/transcoder_eval.py \
-      --source_lang "python" \
-      --target_lang "java" \
-      --eval_file $EVAL_PATH/$model-$data_file6 \
-      --model $model
+#   python $ROOT/evaluation/evaluator/execution_based/transcoder_eval.py \
+#       --source_lang "python" \
+#       --target_lang "java" \
+#       --eval_file $EVAL_PATH/$model-$data_file6 \
+#       --model $model
 
 done

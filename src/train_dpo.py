@@ -68,27 +68,10 @@ def main():
     )
 
     # 4. 加载 Tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(script_args.model_name_or_path, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(script_args.model_name_or_path)
     if tokenizer.pad_token is None:
-        if tokenizer.eos_token is not None:
-            tokenizer.pad_token = tokenizer.eos_token
-        else:
-            tokenizer.add_special_tokens({'pad_token': '<|endoftext|>'})
-            tokenizer.pad_token_id = 151643 # Qwen 的默认 pad id
-            
-    # [重要] Qwen2.5 DPO 建议：明确打印一下 ID 确保加载正确
-    print(f"🔥 Tokenizer Loaded | EOS: {tokenizer.eos_token_id} | PAD: {tokenizer.pad_token_id}")
-    
-    model.config.pad_token_id = tokenizer.pad_token_id
-    
-    if ref_model is not None:
-        ref_model.config.pad_token_id = tokenizer.pad_token_id
-        
-    if model.generation_config is not None:
-        model.generation_config.pad_token_id = tokenizer.pad_token_id
-        
-    print(f"🔧 Model Config Updated: model.config.pad_token_id = {model.config.pad_token_id}")
-        
+        tokenizer.pad_token = tokenizer.eos_token
+
     # 5. 加载数据
     print(f"Loading dataset from {script_args.data_path}...")
     dataset = load_dataset('json', data_files=script_args.data_path, split='train')

@@ -7,8 +7,8 @@ nvidia-smi
 # 路径配置
 ROOT="/data/private/ExeCoder"
 SFT_MODEL_PATH="/data/private/ExeCoder/results/Qwen2.5-Coder-7B-Instruct-code/checkpoint-327"
-DATA_PATH="$ROOT/data/merged_result.json"
-OUTPUT_DIR="$ROOT/results/qwen_dpo_merged_result"
+DATA_PATH="/data/private/ExeCoder/data/dpo_train_qwen_clean.json"
+OUTPUT_DIR="$ROOT/results/dpo_merged_result"
 
 # 创建日志目录
 timestamp() {
@@ -27,16 +27,17 @@ echo "Model: $SFT_MODEL_PATH"
 # 2. 开启 gradient_checkpointing
 # 3. 使用 bf16 (L40 支持)
 # 4. 调整学习率 (DPO 通常比 SFT 低)
-deepspeed --master_port=29501 src/train_dpo.py \
+deepspeed --master_port=29501 src/train_dpo_qwen.py \
     --model_name_or_path $SFT_MODEL_PATH \
     --data_path $DATA_PATH \
     --output_dir $OUTPUT_DIR \
     --num_train_epochs 3 \
-    --max_length 2048 \
+    --max_length 2049 \
     --max_prompt_length 1024 \
     --per_device_train_batch_size 2 \
     --gradient_accumulation_steps 4 \
     --learning_rate 5e-7 \
+    --remove_unused_columns False \
     --warmup_ratio 0.1 \
     --logging_steps 5 \
     --save_steps 50 \

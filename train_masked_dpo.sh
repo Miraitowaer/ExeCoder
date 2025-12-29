@@ -7,13 +7,13 @@ nvidia-smi
 # ================= 配置区 =================
 ROOT="/data/private/ExeCoder"
 # SFT 模型路径 (请确认这是你最新的 SFT checkpoint)
-SFT_MODEL_PATH="/data/private/ExeCoder/results/Deepseek-coder-6.7b-instruct-code/checkpoint-400"
+SFT_MODEL_PATH="/data/private/ExeCoder/results/Qwen2.5-Coder-7B-Instruct-code/checkpoint-327"
 
 # 数据路径 (请确认这是 v5 版本的 ranked 数据)
-DATA_PATH="$ROOT/data/dpo_pairs_ranked_v4.json"
+DATA_PATH="$ROOT/data/merged_result.json"
 
 # 输出目录 (区分于 Baseline)
-OUTPUT_DIR="$ROOT/results/dpo_masked_focus_v2"
+OUTPUT_DIR="$ROOT/results/qwen_dpo_merged_result"
 # =========================================
 
 # 创建日志目录

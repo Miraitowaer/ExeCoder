@@ -4,14 +4,14 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # ================= 配置区 =================
 # 1. 你的 SFT 基座模型路径 (用于初始化结构)
-BASE_MODEL_PATH = "/data/private/ExeCoder/results/Deepseek-coder-6.7b-instruct-code/checkpoint-327"
+BASE_MODEL_PATH = "/data/private/ExeCoder/results/Qwen2.5-Coder-7B-Instruct-code/checkpoint-327"
 
 # 2. 你的 DeepSpeed Checkpoint 路径
 # 注意：指向 checkpoint-500 目录即可
-CHECKPOINT_PATH = "/data/private/ExeCoder/results/dpo_online_v1/checkpoint-500"
+CHECKPOINT_PATH = "/data/private/ExeCoder/results/Qwen_dpo_online_mask_v2/checkpoint-500"
 
 # 3. 最终输出路径
-OUTPUT_PATH = "/data/private/ExeCoder/results/dpo_online_v1/checkpoint-500-hf"
+OUTPUT_PATH = "/data/private/ExeCoder/results/Qwen_dpo_online_mask_v2/checkpoint-500-hf"
 # =========================================
 
 def main():

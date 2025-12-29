@@ -241,6 +241,57 @@ def compute_dpo_loss(model, ref_model, batch, beta=0.1):
     
     return loss, metrics
 
+def compute_model_confidence(model, tokenizer, prompt, candidate_code, device):
+    """
+    MO-DPO 核心组件：计算生成代码的长度归一化对数似然 (Confidence Score)
+    """
+    model.eval() # 切换到评估模式计算概率
+    
+    # 构造完整输入
+    # 注意：这里假设 prompt 和 code 拼接是直接相连的。
+    # 如果你的 prompt 模板末尾没有换行符但 code 需要，请在这里手动调整，例如 prompt + "\n" + candidate_code
+    full_text = prompt + candidate_code
+    
+    inputs = tokenizer(full_text, return_tensors="pt").to(device)
+    input_ids = inputs["input_ids"]
+    
+    # 计算 prompt 的 token 长度，我们要 mask 掉 prompt 部分的 loss
+    prompt_inputs = tokenizer(prompt, add_special_tokens=False) 
+    prompt_len = len(prompt_inputs["input_ids"]) 
+
+    # 边界保护
+    if prompt_len >= input_ids.shape[1]:
+         prompt_len = input_ids.shape[1] // 2 
+
+    with torch.no_grad():
+        outputs = model(input_ids)
+        logits = outputs.logits
+
+    # Shift logits: 预测下一个 token
+    shift_logits = logits[..., :-1, :].contiguous()
+    shift_labels = input_ids[..., 1:].contiguous()
+    
+    # 计算每个 token 的 loss
+    loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
+    token_losses = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+    token_losses = token_losses.view(input_ids.size(0), -1)
+    
+    # 只取代码生成部分 (去掉 prompt 部分)
+    # prompt_len - 1 是因为 shift 之后索引对齐发生了错位
+    start_idx = max(0, prompt_len - 1)
+    code_losses = token_losses[:, start_idx:]
+    
+    # 转换成 Log Probability (Log P = -Loss)
+    code_log_probs = -code_losses
+    
+    if code_log_probs.shape[1] == 0:
+        return -float('inf') 
+        
+    # 计算归一化得分：总 LogProb / Token 数量
+    score = code_log_probs.sum().item() / code_log_probs.size(1)
+    
+    return score
+
 def main():
     parser = HfArgumentParser(ScriptArguments)
     args = parser.parse_args_into_dataclasses()[0]
@@ -339,8 +390,48 @@ def main():
                 
                 if not fails: continue 
                 
-                chosen = passes[0] if passes else gt_code
+                # chosen = passes[0] if passes else gt_code
+                # rejected = max(fails, key=lambda x: difflib.SequenceMatcher(None, chosen, x).ratio())
+                # =================== MO-DPO: 分层质量评估筛选 ===================
+                chosen = None
+                
+                # [第一层] 基础正确性筛选 (Base Correctness)
+                if not passes:
+                    # 如果没有通过的代码，回退到 Ground Truth (Oracle Anchor)
+                    chosen = gt_code
+                elif len(passes) == 1:
+                    # 如果只有一个通过，直接选它
+                    chosen = passes[0]
+                else:
+                    # [第二层] 基于置信度的优选 (Confidence-based Anchor Selection)
+                    # 从通过的样本中，选择模型最“确信”的那一个
+                    best_score = -float('inf')
+                    best_candidate = passes[0]
+                    
+                    # 性能优化：如果通过的样本太多，为了不拖慢训练，只看前5个
+                    candidates_to_eval = passes
+                    
+                    for cand_code in candidates_to_eval:
+                        # 注意：prompt 变量必须是你当前上下文中 input prompt 的文本
+                        score = compute_model_confidence(
+                            model, 
+                            tokenizer, 
+                            prompt,  # 确保这里使用了当前数据的 prompt 字符串
+                            cand_code, 
+                            accelerator.device # 或者是 model.device
+                        )
+                        
+                        if score > best_score:
+                            best_score = score
+                            best_candidate = cand_code
+                    
+                    chosen = best_candidate
+
+                # [对抗挖掘] 困难负样本构建 (Hard Negative Mining)
+                # 在所有失败样本中，找到与 chosen 编辑距离最近（最像）的那个
+                # ratio() 越高代表越相似，即编辑距离越小
                 rejected = max(fails, key=lambda x: difflib.SequenceMatcher(None, chosen, x).ratio())
+                # ==============================================================
                 if chosen == rejected: continue
                 
                 c_ids, c_mask, c_lbl, r_ids, r_mask, r_lbl = masker.tokenize_and_mask(prompt, chosen, rejected)
@@ -420,27 +511,22 @@ def main():
     accelerator.wait_for_everyone()
     
     # 2. 解包模型 (去除 DDP/ZeRO 壳)
-    # unwrapped_model = accelerator.unwrap_model(model)
-    
-    save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
-    
-    logger.info("Training finished. Saving final model to Safetensors...")
-    accelerator.save_state(save_path)
+    unwrapped_model = accelerator.unwrap_model(model)
     
     # 3. 主进程保存为 Safetensors (用于推理)
     if accelerator.is_main_process:
+        logger.info("Training finished. Saving final model to Safetensors...")
         
-        # unwrapped_model.save_pretrained(
-        #     args.output_dir,
-        #     is_main_process=True,
-        #     save_function=accelerator.save,
-        #     safe_serialization=True,      # [FIX 4] 直接生成 .safetensors
-        #     max_shard_size="10GB"
-        # )
+        unwrapped_model.save_pretrained(
+            args.output_dir,
+            is_main_process=True,
+            save_function=accelerator.save,
+            safe_serialization=True,      # [FIX 4] 直接生成 .safetensors
+            max_shard_size="10GB"
+        )
         
-        
-        tokenizer.save_pretrained(save_path)
-        logger.info(f"Final model saved to {save_path}")
+        tokenizer.save_pretrained(args.output_dir)
+        logger.info(f"Final model saved to {args.output_dir}")
 
     # 4. 结束训练
     accelerator.end_training()

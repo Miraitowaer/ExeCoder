@@ -17,11 +17,13 @@ LOG_PATH=$ROOT/loginfo/$(timestamp)-$RANDOM
 mkdir -p "$LOG_PATH"
 
 # 1. 再次确认模型路径 (根据你实际下载的文件夹名修改)
-MODELS=("Deepseek-coder-6.7b-instruct")
-# MODELS=("Qwen2.5-Coder-7B-Instruct") 
+# MODELS=("Deepseek-coder-6.7b-instruct")
+MODELS=("CodeLlama-7B-Instruct") 
 
 # 数据模态
 MODALs=("code")
+
+# --data_path $MODEL_PATH/data/XLCoST_data/XLCoST-Instruct/Tuning/$MODAL/train.json \
 
 length=${#MODALs[@]}
 
@@ -36,7 +38,7 @@ do
   # 建议加上 --master_port 防止端口冲突
   deepspeed --master_port=$((29500 + $RANDOM % 1000)) $ROOT/src/train.py \
       --model_name_or_path $MODEL_PATH/checkpoint/$MODEL \
-      --data_path $MODEL_PATH/data/XLCoST_data/XLCoST-Instruct/Tuning/$MODAL/train.json \
+      --data_path /data/private/ExeCoder/data/split_sft_data.json \
       --dev_data_path $MODEL_PATH/data/XLCoST_data/XLCoST-Instruct/Tuning/$MODAL/dev.json \
       --cache_dir $MODEL_PATH/data_cache \
       --output_dir $MODEL_PATH/results/$MODEL-$MODAL \
@@ -57,7 +59,7 @@ do
       --lr_scheduler_type "cosine" \
       --report_to "tensorboard" \
       --gradient_checkpointing True \
-      --deepspeed $ROOT/src/configs/deepspeed_config_zero2.json \
+      --deepspeed $ROOT/src/configs/deepspeed_config_zero2_raw.json \
       --fp16 True \
       > "$LOG_PATH/out.txt" 2>&1
 

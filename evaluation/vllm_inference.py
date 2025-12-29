@@ -10,16 +10,37 @@ def generate_batch(examples, tokenizer, llm, model: str):
     
     # [关键修改] 定义与 SFT train.py 完全一致的 Alpaca 模板
     # 必须包含 Preamble (Below is an instruction...)
-    ALPACA_PROMPT_DICT = {
+    # ALPACA_PROMPT_DICT = {
+    #     "prompt_input": (
+    #         "Below is an instruction that describes a task, paired with an input that provides further context. "
+    #         "Write a response that appropriately completes the request.\n\n"
+    #         "### Instruction:\n{instruction}\n\n### Input:\n{input}\n\n### Response:"
+    #     ),
+    #     "prompt_no_input": (
+    #         "Below is an instruction that describes a task. "
+    #         "Write a response that appropriately completes the request.\n\n"
+    #         "### Instruction:\n{instruction}\n\n### Response:"
+    #     ),
+    # }
+    
+    DEFAULT_SYSTEM_PROMPT = "You are a helpful coding assistant. Provide only the correct code solution."
+
+    PROMPT_DICT = {
+        # 场景 A: 包含 instruction (题目) 和 input (具体输入/上下文)
         "prompt_input": (
-            "Below is an instruction that describes a task, paired with an input that provides further context. "
-            "Write a response that appropriately completes the request.\n\n"
-            "### Instruction:\n{instruction}\n\n### Input:\n{input}\n\n### Response:"
+            "<s>[INST] <<SYS>>\n"
+            "{system_prompt}\n"
+            "<</SYS>>\n\n"
+            "{instruction}\n\n"
+            "{input} [/INST]"
         ),
+        
+        # 场景 B: 只包含 instruction (题目)
         "prompt_no_input": (
-            "Below is an instruction that describes a task. "
-            "Write a response that appropriately completes the request.\n\n"
-            "### Instruction:\n{instruction}\n\n### Response:"
+            "<s>[INST] <<SYS>>\n"
+            "{system_prompt}\n"
+            "<</SYS>>\n\n"
+            "{instruction} [/INST]"
         ),
     }
 
@@ -31,14 +52,16 @@ def generate_batch(examples, tokenizer, llm, model: str):
 
         # 逻辑判断：如果 input 字段存在且不为空，使用 prompt_input 模板
         if input_data and input_data.strip():
-            prompt = ALPACA_PROMPT_DICT["prompt_input"].format(
+            prompt = PROMPT_DICT["prompt_input"].format(
                 instruction=instruction,
-                input=input_data
+                input=input_data,
+                system_prompt=DEFAULT_SYSTEM_PROMPT
             )
         else:
             # 否则使用 prompt_no_input 模板
-            prompt = ALPACA_PROMPT_DICT["prompt_no_input"].format(
-                instruction=instruction
+            prompt = PROMPT_DICT["prompt_no_input"].format(
+                instruction=instruction,
+                system_prompt=DEFAULT_SYSTEM_PROMPT
             )
         
         prompts.append(prompt)
