@@ -27,7 +27,7 @@ OUTPUT_DIR="/data/private/ExeCoder/results/Qwen_dpo_online_mask_v3"
 
 # ================= 启动命令 =================
 # 注意末尾的 2>&1 | tee ... 是关键，它将标准输出和错误都同时打印到屏幕和文件
-accelerate launch --config_file src/configs/accelerate_config.yaml src/train_online_dpo_mask.py \
+accelerate launch --config_file src/configs/accelerate_config.yaml src/train_online_dpo_mask_v1.py \
     --sft_model_path "$SFT_MODEL_PATH" \
     --data_path "$DATA_PATH" \
     --output_dir "$OUTPUT_DIR" \
@@ -37,6 +37,7 @@ accelerate launch --config_file src/configs/accelerate_config.yaml src/train_onl
     --beta 0.05 \
     --per_device_train_batch_size 1 \
     --gradient_accumulation_steps 8 \
+    --gradient_checkpointing True \
     --learning_rate 5e-7 \
     --num_train_epochs 1 \
     --save_steps 500 \

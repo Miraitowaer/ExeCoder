@@ -4,6 +4,33 @@ from transformers import AutoTokenizer
 from pathlib import Path
 import torch
 
+def get_system_prompt(target_lang):
+    # 映射语言缩写，例如 cpp -> c++, java -> java
+    lang_map = {
+        "cpp": "C++", 
+        "c++": "C++", 
+        "java": "Java", 
+        "python": "Python",
+        "go": "Go"
+    }
+    lang_name = lang_map.get(target_lang.lower(), target_lang)
+    
+    style_constraint = ""
+    if target_lang.lower() == "python":
+        style_constraint = (
+            "IMPORTANT: strict adherence to the original function names is required. "
+            "Do NOT convert function names to snake_case (e.g., keep 'findArea', do NOT change to 'find_area'). "
+            "The evaluation script relies on the exact original name."
+        )
+    
+    # 强制命令：Use Markdown code blocks
+    return (
+        f"You are an expert {lang_name} programmer. "
+        f"Translate the given code into efficient {lang_name} code. "
+        f"{style_constraint} " # 插入约束
+        f"IMPORTANT: You must wrap the code in a markdown block like ```{lang_name.lower()} ... ```. "
+        "Do not output explanations, only the code."
+    )
 
 def generate_batch(examples, tokenizer, llm, model: str):
     stop = None
@@ -23,7 +50,7 @@ def generate_batch(examples, tokenizer, llm, model: str):
     #     ),
     # }
     
-    DEFAULT_SYSTEM_PROMPT = "You are a helpful coding assistant. Provide only the correct code solution."
+    # DEFAULT_SYSTEM_PROMPT = "You are a helpful coding assistant. Provide only the correct code solution."
 
     PROMPT_DICT = {
         # 场景 A: 包含 instruction (题目) 和 input (具体输入/上下文)
@@ -49,19 +76,23 @@ def generate_batch(examples, tokenizer, llm, model: str):
         # 提取字段，做简单的防御性处理
         instruction = ex.get('instruction', '')
         input_data = ex.get('input', '')
+        pair = ex.get('pair', '')
+        lang = pair.split('-')[1]
+        sys_prompt = get_system_prompt(lang)
+        
 
         # 逻辑判断：如果 input 字段存在且不为空，使用 prompt_input 模板
         if input_data and input_data.strip():
             prompt = PROMPT_DICT["prompt_input"].format(
                 instruction=instruction,
                 input=input_data,
-                system_prompt=DEFAULT_SYSTEM_PROMPT
+                system_prompt=sys_prompt
             )
         else:
             # 否则使用 prompt_no_input 模板
             prompt = PROMPT_DICT["prompt_no_input"].format(
                 instruction=instruction,
-                system_prompt=DEFAULT_SYSTEM_PROMPT
+                system_prompt=sys_prompt
             )
         
         prompts.append(prompt)

@@ -66,6 +66,7 @@ class ScriptArguments:
     learning_rate: float = field(default=5e-7)
     per_device_train_batch_size: int = field(default=1) 
     gradient_accumulation_steps: int = field(default=8)
+    gradient_checkpointing: bool = field(default=True)
     num_train_epochs: int = field(default=1)
     beta: float = field(default=0.1)
     max_length: int = field(default=2048)

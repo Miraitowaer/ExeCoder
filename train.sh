@@ -18,7 +18,8 @@ mkdir -p "$LOG_PATH"
 
 # 1. 再次确认模型路径 (根据你实际下载的文件夹名修改)
 # MODELS=("Deepseek-coder-6.7b-instruct")
-MODELS=("CodeLlama-7B-Instruct") 
+# MODELS=("CodeLlama-7B-Instruct") 
+MODELS=("Qwen3-4B") 
 
 # 数据模态
 MODALs=("code")

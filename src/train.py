@@ -43,35 +43,35 @@ DEFAULT_UNK_TOKEN = "</s>"
 #         "### Instruction:\n{instruction}\n\n### Response:"
 #     ),
 # }
-# PROMPT_DICT = {
-#     "prompt_input": (
-#         "{instruction}\n{input}"
-#     ),
-#     "prompt_no_input": (
-#         "{instruction}"
-#     ),
-# }
-
-DEFAULT_SYSTEM_PROMPT = "You are a helpful coding assistant. Provide only the correct code solution."
-
 PROMPT_DICT = {
-    # 场景 A: 包含 instruction (题目) 和 input (具体输入/上下文)
     "prompt_input": (
-        "<s>[INST] <<SYS>>\n"
-        "{system_prompt}\n"
-        "<</SYS>>\n\n"
-        "{instruction}\n\n"
-        "{input} [/INST]"
+        "{instruction}\n{input}"
     ),
-    
-    # 场景 B: 只包含 instruction (题目)
     "prompt_no_input": (
-        "<s>[INST] <<SYS>>\n"
-        "{system_prompt}\n"
-        "<</SYS>>\n\n"
-        "{instruction} [/INST]"
+        "{instruction}"
     ),
 }
+
+# DEFAULT_SYSTEM_PROMPT = "You are a helpful coding assistant. Provide only the correct code solution."
+
+# PROMPT_DICT = {
+#     # 场景 A: 包含 instruction (题目) 和 input (具体输入/上下文)
+#     "prompt_input": (
+#         "<s>[INST] <<SYS>>\n"
+#         "{system_prompt}\n"
+#         "<</SYS>>\n\n"
+#         "{instruction}\n\n"
+#         "{input} [/INST]"
+#     ),
+    
+#     # 场景 B: 只包含 instruction (题目)
+#     "prompt_no_input": (
+#         "<s>[INST] <<SYS>>\n"
+#         "{system_prompt}\n"
+#         "<</SYS>>\n\n"
+#         "{instruction} [/INST]"
+#     ),
+# }
 
 
 @dataclass
@@ -188,34 +188,34 @@ class DataCollatorForSupervisedDataset(object):
 
 def train_tokenize_function(examples, tokenizer):
     prompt_input, prompt_no_input = PROMPT_DICT["prompt_input"], PROMPT_DICT["prompt_no_input"]
-    # if 'input' in examples:
-    #     sources = [
-    #         prompt_input.format_map(dict(instruction=instruction, input=input)) if input != "" \
-    #         else prompt_no_input.format_map(dict(instruction=instruction)) \
-    #         for instruction, input in zip(examples['instruction'], examples['input']) 
-    #     ]
-    # else:
-    #     sources = [
-    #         prompt_no_input.format_map(dict(instruction=instruction)) \
-    #         for instruction in examples['instruction']
-    #     ]
     if 'input' in examples:
         sources = [
-            prompt_input.format_map(
-                dict(instruction=instruction, input=input, system_prompt=DEFAULT_SYSTEM_PROMPT)
-            ) if input != "" \
-            else prompt_no_input.format_map(
-                dict(instruction=instruction, system_prompt=DEFAULT_SYSTEM_PROMPT)
-            ) \
-            for instruction, input in zip(examples['instruction'], examples['input'])
+            prompt_input.format_map(dict(instruction=instruction, input=input)) if input != "" \
+            else prompt_no_input.format_map(dict(instruction=instruction)) \
+            for instruction, input in zip(examples['instruction'], examples['input']) 
         ]
     else:
         sources = [
-            prompt_no_input.format_map(
-                dict(instruction=instruction, system_prompt=DEFAULT_SYSTEM_PROMPT)
-            ) \
+            prompt_no_input.format_map(dict(instruction=instruction)) \
             for instruction in examples['instruction']
         ]
+    # if 'input' in examples:
+    #     sources = [
+    #         prompt_input.format_map(
+    #             dict(instruction=instruction, input=input, system_prompt=DEFAULT_SYSTEM_PROMPT)
+    #         ) if input != "" \
+    #         else prompt_no_input.format_map(
+    #             dict(instruction=instruction, system_prompt=DEFAULT_SYSTEM_PROMPT)
+    #         ) \
+    #         for instruction, input in zip(examples['instruction'], examples['input'])
+    #     ]
+    # else:
+    #     sources = [
+    #         prompt_no_input.format_map(
+    #             dict(instruction=instruction, system_prompt=DEFAULT_SYSTEM_PROMPT)
+    #         ) \
+    #         for instruction in examples['instruction']
+    #     ]
     targets = [f"{output}{tokenizer.eos_token}" for output in examples['output']]
     data_dict = preprocess(sources, targets, tokenizer)
     return data_dict
